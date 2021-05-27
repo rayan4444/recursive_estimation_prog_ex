@@ -30,11 +30,11 @@ const.contour = [0.50, 0.00;
 %% Initialization
 const.pA = [1.1,0.6]; % Center point pA of the initial position distribution
 const.pB = [1.8,2.0]; % Center point pB of the initial position distribution
-const.d = 0.2;  % Radius of shaded regions for initialization
+const.d = 0.2;  % Radius of shaded regions for initialization, between 0.1 and 0.2
 
 const.phi_0 = pi/4; % Initial heading is uniformly distr. in [-phi_0,phi_0]
 
-const.l = 0.2;  % Uniform distribution parameter of points p9 and p10
+const.l = 0.2;  % Uniform distribution parameter of points p9 and p10, between 0.1 and 0.2
 
 %% Noise properties
 % process noise
