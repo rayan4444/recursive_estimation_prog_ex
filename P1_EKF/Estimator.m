@@ -252,7 +252,10 @@ function [A] = get_A(x_hat, estConst, u, q)
     
     
     
-    %Extension to get partial derivatives using diff function 
+    %Extension to get partial derivatives using diff function, might need
+    %to compute this symbolically in a different function 
+    
+    %syms sx sy phi rho
     
 %     A(3,3) = diff(q(3),sx);
 %     A(3,4) = diff(q(3),sy);
