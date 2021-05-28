@@ -254,17 +254,7 @@ function [A] = get_A(x_hat, estConst, u, q)
     
     %Extension to get partial derivatives using diff function 
     
-%     A(3,3) = diff(q(3),sx);
-%     A(3,4) = diff(q(3),sy);
-%     A(3,5) = diff(q(3),phi);
-%     A(3,6) = diff(q(3),rho);
-%     
-%     A(4,3) = diff(q(4),sx);
-%     A(4,4) = diff(q(4),sy);
-%     A(4,5) = diff(q(4),phi);
-%     A(4,6) = diff(q(4),rho);
-    
-    
+    A(3,3) = diff(q
 end 
 
 function [L]= get_L(x_hat, estConst, u)
@@ -289,7 +279,6 @@ function [L]= get_L(x_hat, estConst, u)
     L(5,2)= C_r*u(2);
     L(6,3)= 1;
     L(7,4)= 1;
-    
 end
 
 function [xP_dot]= prior_update_ODE(t,estState_simple,estConst, actuate)
