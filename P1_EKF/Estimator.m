@@ -71,8 +71,9 @@ if (tm == 0)
     posEst =  [0 0]; % 1x2 matrix
     linVelEst = [ 0 0 ]; % 1x2 matrix
     oriEst = 0; % 1x1 matrix
+    windEst = 0; %1X1
     driftEst = 0; % 1x1 matrix
-    windEst = 0;
+    
     
     R0 = estConst.StartRadiusBound;
     % initial state variance
@@ -113,7 +114,7 @@ xP_0 =[estState.xm;reshape(estState.Pm,[49,1])];
 
 % Predicted intermediary values
 xp = sol(end, 1:7)';
-Pp = reshape(xP(end,8:56), [7,7]);
+Pp = reshape(sol(end,8:56), [7,7]);
 
 %% measurement update
 
@@ -213,8 +214,8 @@ function [q]= get_q(x_hat,estConst,u)
     q = zeros(7,1);
     q(1)= sx; %sx
     q(2)= sy; %sy
-    q(3)= cos(phi)*(tanh(u(1))- C_dh(sx^2+sy^2))-C_da(sx-Cw*cos(rho))*sqrt((sx-C_w*cos(rho))^2+(sy-C_w*sin(rho))^2);
-    q(4)= sin(phi)*(tanh(u(1))- C_dh(sx^2+sy^2))-C_da(sy-Cw*sin(rho))*sqrt((sx-C_w*cos(rho))^2+(sy-C_w*sin(rho))^2);
+    q(3)= cos(phi)*(tanh(u(1))- C_dh*(sx^2+sy^2)) - C_da*(sx-C_w*cos(rho))*sqrt((sx-C_w*cos(rho))^2+(sy-C_w*sin(rho))^2);
+    q(4)= sin(phi)*(tanh(u(1))- C_dh*(sx^2+sy^2))- C_da*(sy-C_w*sin(rho))*sqrt((sx-C_w*cos(rho))^2+(sy-C_w*sin(rho))^2);
     q(5)= C_r*u(2);
     %q(6)= 0  and q(7) =0
     
@@ -241,14 +242,14 @@ function [A] = get_A(x_hat, estConst, u)
     % holy shit this is going to be one very long partial derivative to get
     
     A(3,3) = -(C_da*(sx - C_w*cos(rho))^2)/sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - C_da*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - 2*C_dh*sx*cos(phi); %dq(3)/d(sx)
-    A(3,4) = -(C_da*(x - C_w*cos(rho))*(sy - C_w*sin(rho)))/sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - 2*C_dh*sy*cos(phi); %dq(3)/d(sy)
-    A(3,5) = -sin(phi)*(tanh(u(1)) - C_hd*(sx^2 + sy^2)); %dq(3)/d(phi)
+    A(3,4) = -(C_da*(sx - C_w*cos(rho))*(sy - C_w*sin(rho)))/sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - 2*C_dh*sy*cos(phi); %dq(3)/d(sy)
+    A(3,5) = -sin(phi)*(tanh(u(1)) - C_dh*(sx^2 + sy^2)); %dq(3)/d(phi)
     A(3,6) = -C_da*C_w*sin(rho)*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - (C_da*(sx - C_w*cos(rho))*(2*C_w*sin(rho)*(sx - C_w*cos(rho)) - 2*C_w*cos(rho)*(sy - C_w*sin(rho))))/(2*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)); %dq/d(rho)
     
     A(4,3) = -(C_da*(sx - C_w*cos(rho))*(sy - C_w*sin(rho)))/sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - 2*C_dh*sx*sin(phi);%dq4/d(sx)
     A(4,4) = -(C_da*(sy - C_w*sin(rho))^2)/sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - C_da*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - 2*C_dh*sy*sin(phi);%dq4/d(sy)
     A(4,5) = cos(phi)*(tanh(u(1)) - C_da*(sx^2 + sy^2));
-    A(4,6) = C_da*C_w*cos(rho)*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - (C_da*(sy - C_w*sin(rho))*(2*C_w*sin(rho)*(sx - C_w*cos(rho)) - 2*C*cos(rho)*(sy - C_w*sin(rho))))/(2*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)) ; %dq/d(rho)
+    A(4,6) = C_da*C_w*cos(rho)*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - (C_da*(sy - C_w*sin(rho))*(2*C_w*sin(rho)*(sx - C_w*cos(rho)) - 2*C_w*cos(rho)*(sy - C_w*sin(rho))))/(2*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)) ; %dq/d(rho)
 end 
 
 function [L]= get_L(x_hat, estConst, u)
@@ -283,7 +284,7 @@ function [xP_dot]= prior_update_ODE(t,estState_simple,estConst, actuate)
     % find A and L matrices
     A = get_A(xm, estConst, actuate); %7x7 matrix
     L = get_L(xm, estConst, actuate); %7x4 matrix 
-    Qc =diag([estConst.DragNoise estconst.RudderNoise estConst.GyroDriftNoise]); % 4x4 diagonal matrix
+    Qc =diag([estConst.DragNoise estConst.RudderNoise estConst.WindAngleNoise estConst.GyroDriftNoise]); % 4x4 diagonal matrix
     
     P = reshape(estState_simple(8:56), [7,7]);
     P_dot = reshape(A*P + P*A'+L*Qc*L', [49, 1]); % flatten 7x7 matrix in to 49x1
