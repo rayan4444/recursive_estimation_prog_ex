@@ -62,7 +62,9 @@ if (km == 0)
     postParticles.x_r =  x_0(:, 1)';% 1xN_particles matrix
     postParticles.y_r = x_0(:, 2)';% 1xN_particlses matrix
     postParticles.phi = x_0(:, 3)';% 1xN_particles matrix
-    postParticles.kappa = x_0(:, 4)';% 1xN_parunrticles matrix    
+    postParticles.kappa = x_0(:, 4)';% 1xN_parunrticles matrix
+    postParticles.beta = 0;
+    postParticles.prevPriors = zeros(4, N_particles);
     
     % and leave the function
     return;
@@ -77,7 +79,9 @@ priors = zeros(4, N_particles);
 points = zeros(size(estConst.contour, 1), size(estConst.contour, 2), N_particles); % contour map for each kappa, [10x2xN_particles]
 p_z = zeros(1, N_particles); %Probability distribution of the observations based on the prior
 w_k = zeros(1, N_particles);
+reSampSize = 10*N_particles;
 %Propagate particles through dynamics
+
 for i = 1:N_particles
     procNoise(:, i) = getProcessNoise([estConst.sigma_f;
                          estConst.sigma_phi]); 
@@ -97,8 +101,37 @@ for i = 1:N_particles
     interPoint = findIntersectionPoints(priors(3, i), points(:, :, i), priors(1:2, i)); %[x_c; y_c] - coordinates of the laser intersection of the contour
     df = priors(1:2, i) - interPoint; 
     w_k(i) = sens - sqrt(sum(df .* df));
-    p_z(i) = pdf_wk(w_k(i), estConst.epsilon, estConst.epsilon/10000);
+    p_z(i) = pdf_wk(w_k(i), estConst.epsilon);
 end
+disp
+if sum(p_z) == 0
+    p_z_rr = zeros(1, reSampSize);
+    while (sum(p_z_rr) == 0) 
+        b_x = [-estConst.l, max(estConst.contour(:, 1))];
+        b_y = [min(estConst.contour(:, 2)), max(estConst.contour(:, 2))];
+        b_phi = [-estConst.phi_0, estConst.phi_0];
+        b_k = [-estConst.l, estConst.l];
+        mu = [mean(b_x); mean(b_y); mean(b_phi); mean(b_k)];
+        bound = [0.5*(b_x(2) - b_x(1)); 0.5*(b_y(2) - b_y(1)); 0.5*(b_phi(2) - b_phi(1)); 0.5*(b_k(2) - b_k(1))];
+        priors_rr = uniformResample(mu, bound, reSampSize, estConst.contour);
+        w_rr = zeros(1, reSampSize);
+        points_rr = zeros(size(estConst.contour, 1), size(estConst.contour, 2), reSampSize);
+        for i = 1:reSampSize
+            points_rr(:, :, i) = estConst.contour;
+            points_rr(8, 1, i) =  priors_rr(4, i);
+            points_rr(9, 1, i)  = priors_rr(4, i); 
+            interPoint = findIntersectionPoints(priors_rr(3, i), points_rr(:, :, i), priors_rr(1:2, i)); 
+            df = priors_rr(1:2, i) - interPoint; 
+            w_rr(i) = sens - sqrt(sum(df .* df));
+            p_z_rr(i) = pdf_wk(w_rr(i), estConst.epsilon);
+        end
+        [~, idx_rr] = maxk(p_z_rr, N_particles);
+        p_z = p_z_rr(idx_rr);
+    end
+    priors = priors_rr(:, idx_rr);
+end
+alpha = 1/sum(p_z);
+beta = alpha * p_z;
 
 postParticles.x_r = zeros(1, N_particles);
 postParticles.y_r = zeros(1, N_particles);
@@ -106,35 +139,30 @@ postParticles.phi = zeros(1, N_particles);
 postParticles.kappa = zeros(1, N_particles);
 rough_sigmas = getRougheningSigma(estConst.K, priors, N_particles);
 
-if sum(p_z) == 0 %Have to deal with situations when the measurement cannot be explained by our model
-    ihavenocluewhattodo = 69420;
-    %What is below is wrong (it's the same as in the else statement)
-    alpha = 1/sum(p_z);
-    beta = alpha * p_z;
+%Measurement update + resample
+idx = getResample(beta);
 
-    %Measurement update + resample
-    idx = getResample(beta);
-    postParticles.x_r = priors(1, idx) + getNormalSample(0, rough_sigmas(1));
-    postParticles.y_r = priors(2, idx) + getNormalSample(0, rough_sigmas(2));
-    postParticles.phi = priors(3, idx) + getNormalSample(0, rough_sigmas(3));
-    postParticles.kappa = priors(4, idx) + getNormalSample(0, rough_sigmas(4));
-else
-    alpha = 1/sum(p_z);
-    beta = alpha * p_z;
-
-    %Measurement update + resample
-    idx = getResample(beta);
-    postParticles.x_r = priors(1, idx) + getNormalSample(0, rough_sigmas(1));
-    postParticles.y_r = priors(2, idx) + getNormalSample(0, rough_sigmas(2));
-    postParticles.phi = priors(3, idx) + getNormalSample(0, rough_sigmas(3));
-    postParticles.kappa = priors(4, idx) + getNormalSample(0, rough_sigmas(4));
-    end
+postParticles.x_r = priors(1, idx) + getNormalSample(0, rough_sigmas(1), [1, N_particles]);
+postParticles.y_r = priors(2, idx) + getNormalSample(0, rough_sigmas(2), [1, N_particles]);
+postParticles.phi = priors(3, idx) + getNormalSample(0, rough_sigmas(3), [1, N_particles]);
+postParticles.kappa = priors(4, idx) + getNormalSample(0, rough_sigmas(4), [1, N_particles]);
 end % end estimator
 
 %Disclaimer - probably can be cleaned up quite a bit, e.g. using 
 % getSample more generally to sample a pdf f with a cdf F
 
-
+function samps = uniformResample(mu, bounds, N_particles, contour)
+    samps = zeros(4, N_particles);
+    for i = 1:N_particles
+        if i == 1
+            samps(:, i) = mu + (rand(4, 1)*2 - 1) .* bounds;
+        else
+            while ~inpolygon(samps(1, i), samps(2, i), contour(:, 1), contour(:, 2))
+                samps(:, i) = mu + (rand(4, 1)*2 - 1) .* bounds;
+            end
+        end
+    end
+end
 
 function xkp1 = q(xp, u, v)
     xkp1 = [xp(1) + (u(1) + v(1)) .* cos(xp(3));
@@ -153,8 +181,8 @@ function sigmas = getRougheningSigma(K, priors, N)
     sigmas = K * (N^(-1/4)) * (max(priors, [], 2) - min(priors, [], 2));
 end
 
-function samp = getNormalSample(mu, sigma)
-    samp = mu + sqrt(2)*sigma*erfinv(2*rand-1);
+function samp = getNormalSample(mu, sigma, size)
+    samp = mu + sqrt(2)*sigma*erfinv(2*rand(size(1), size(2))-1);
 end
 
 function plotDebug(inter, pos, phi, points)
@@ -243,7 +271,7 @@ function idx = getResample(beta)
     end
 end
 
-function pwk = pdf_wk(x_in, epsilon, delta)
+function pwk = pdf_wk(x_in, epsilon)
     if x_in<0
         x_in = -x_in;
     end
@@ -257,8 +285,8 @@ function pwk = pdf_wk(x_in, epsilon, delta)
         pwk = 0;
         return;
     end
-    delta = epsilon/10000; %Completely random 
-    pwk = pdf(x_in) * delta; % Rectangular integration lol long time no see
+    delta = epsilon/1000; %Completely random 
+    pwk = 0.5*delta*(pdf(x_in+0.5*delta) + pdf(x_in-0.5*delta)); % Trapezoid integration lol long time no see
 end
 
 function x_bar = sampleInitial(mu, var, N) %Sample uniform around (p0-x_bar) <= d 
