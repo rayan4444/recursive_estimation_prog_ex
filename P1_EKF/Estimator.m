@@ -139,12 +139,12 @@ h = [sqrt((px- estConst.pos_radioA(1))^2+(py-estConst.pos_radioA(2))^2);
 
 % get H matrix
 H = zeros(5,7); %5x7 matrix
-H(1,1) = (px- estConst.pos_radioA(1))/h(1);
-H(1,2) = (py-estConst.pos_radioA(2))/h(1);
-H(2,1) = (px- estConst.pos_radioB(1))/h(2);
-H(2,2) = (py-estConst.pos_radioB(2))/h(2);
-H(3,1) = (px- estConst.pos_radioC(1))/h(3);
-H(3,2) = (py-estConst.pos_radioC(2))/h(3);
+H(1,1) = (px - estConst.pos_radioA(1))/h(1);
+H(1,2) = (py - estConst.pos_radioA(2))/h(1);
+H(2,1) = (px - estConst.pos_radioB(1))/h(2);
+H(2,2) = (py - estConst.pos_radioB(2))/h(2);
+H(3,1) = (px - estConst.pos_radioC(1))/h(3);
+H(3,2) = (py - estConst.pos_radioC(2))/h(3);
 H(4,5) = 1; 
 H(4,7)= 1;
 H(5,5)= 1;
@@ -226,8 +226,7 @@ function [A] = get_A(x_hat, estConst, u)
     C_dh = estConst.dragCoefficientHydr;
     C_da = estConst.dragCoefficientAir;
     C_w = estConst.windVel;
-    C_r = estConst.rudderCoefficient; 
-    
+
     % make it easier to read
     sx = x_hat(3);
     sy = x_hat(4);
@@ -239,32 +238,27 @@ function [A] = get_A(x_hat, estConst, u)
     A(2,4) = 1; % dq(2)/d(sx)
     
     % 13 = c_da; 7 = C_dh; A = tanh(ut)
-    % holy shit this is going to be one very long partial derivative to get
-    
-    A(3,3) = -(C_da*(sx - C_w*cos(rho))^2)/sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - C_da*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - 2*C_dh*sx*cos(phi); %dq(3)/d(sx)
-    A(3,4) = -(C_da*(sx - C_w*cos(rho))*(sy - C_w*sin(rho)))/sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - 2*C_dh*sy*cos(phi); %dq(3)/d(sy)
+    A(3,3)= - C_da*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2) - 2*C_dh*sx*cos(phi) - (C_da*(sx - C_w*cos(rho))*(2*sx - 2*C_w*cos(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2)); %dq(3)/d(sx)
+    A(3,4) = - 2*C_dh*sy*cos(phi) - (C_da*(sx - C_w*cos(rho))*(2*sy - 2*C_w*sin(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2)); %dq(3)/d(sy)
     A(3,5) = -sin(phi)*(tanh(u(1)) - C_dh*(sx^2 + sy^2)); %dq(3)/d(phi)
-    A(3,6) = -C_da*C_w*sin(rho)*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - (C_da*(sx - C_w*cos(rho))*(2*C_w*sin(rho)*(sx - C_w*cos(rho)) - 2*C_w*cos(rho)*(sy - C_w*sin(rho))))/(2*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)); %dq/d(rho)
-    
-    A(4,3) = -(C_da*(sx - C_w*cos(rho))*(sy - C_w*sin(rho)))/sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - 2*C_dh*sx*sin(phi);%dq4/d(sx)
-    A(4,4) = -(C_da*(sy - C_w*sin(rho))^2)/sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - C_da*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - 2*C_dh*sy*sin(phi);%dq4/d(sy)
-    A(4,5) = cos(phi)*(tanh(u(1)) - C_da*(sx^2 + sy^2));
-    A(4,6) = C_da*C_w*cos(rho)*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2) - (C_da*(sy - C_w*sin(rho))*(2*C_w*sin(rho)*(sx - C_w*cos(rho)) - 2*C_w*cos(rho)*(sy - C_w*sin(rho))))/(2*sqrt((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)) ; %dq/d(rho)
+    A(3,6) = - (C_da*(2*C_w*sin(rho)*(sx - C_w*cos(rho)) - 2*C_w*cos(rho)*(sy - C_w*sin(rho)))*(sx - C_w*cos(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2)) - C_da*C_w*sin(rho)*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2);
+    A(4,3) = - 2*C_dh*sx*sin(phi) - (C_da*(sy - C_w*sin(rho))*(2*sx - 2*C_w*cos(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2)); %dq4/d(sx)
+    A(4,4)=- C_da*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2) - 2*C_dh*sy*sin(phi) - (C_da*(sy - C_w*sin(rho))*(2*sy - 2*C_w*sin(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2)); %dq4/d(sy)
+    A(4,5) = cos(phi)*(tanh(u(1)) - C_dh*(sx^2 + sy^2)); %dq4/d(phi)
+    A(4,6) = C_da*C_w*cos(rho)*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2) - (C_da*(2*C_w*sin(rho)*(sx - C_w*cos(rho)) - 2*C_w*cos(rho)*(sy - C_w*sin(rho)))*(sy - C_w*sin(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2));
+
 end 
 
 function [L]= get_L(x_hat, estConst, u)
     % process noise vector v= [vd; vr; vrho; vb]
     
     C_dh = estConst.dragCoefficientHydr;
-    C_da = estConst.dragCoefficientAir;
-    C_w = estConst.windVel;
     C_r = estConst.rudderCoefficient; 
     
     % make it easier to read
     sx = x_hat(3);
     sy = x_hat(4);
     phi = x_hat(5);
-    rho = x_hat(6);
     
     % So L = dq/dv is 7x4 matrix
     L = zeros(7,4);
@@ -284,7 +278,7 @@ function [xP_dot]= prior_update_ODE(t,estState_simple,estConst, actuate)
     % find A and L matrices
     A = get_A(xm, estConst, actuate); %7x7 matrix
     L = get_L(xm, estConst, actuate); %7x4 matrix 
-    Qc =diag([estConst.DragNoise estConst.RudderNoise estConst.WindAngleNoise estConst.GyroDriftNoise]); % 4x4 diagonal matrix
+    Qc = diag([estConst.DragNoise estConst.RudderNoise estConst.WindAngleNoise estConst.GyroDriftNoise]); % 4x4 diagonal matrix
     
     P = reshape(estState_simple(8:56), [7,7]);
     P_dot = reshape(A*P + P*A'+L*Qc*L', [49, 1]); % flatten 7x7 matrix in to 49x1
