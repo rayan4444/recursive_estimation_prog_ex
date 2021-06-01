@@ -68,48 +68,223 @@ if (tm == 0)
     % Do the initialization of your estimator here!
     
     % initial state mean
-    posEst = ... % 1x2 matrix
-    linVelEst = ... % 1x2 matrix
-    oriEst = ... % 1x1 matrix
-    windEst = ... % 1x1 matrix
-    driftEst = ... % 1x1 matrix
+    posEst =  [0 0]; % 1x2 matrix
+    linVelEst = [ 0 0 ]; % 1x2 matrix
+    oriEst = 0; % 1x1 matrix
+    windEst = 0; %1X1
+    driftEst = 0; % 1x1 matrix
     
+    
+    R0 = estConst.StartRadiusBound;
     % initial state variance
-    posVar = ... % 1x2 matrix
-    linVelVar = ... % 1x2 matrix
-    oriVar = ... % 1x1 matrix
-    windVar = ... % 1x1 matrix
-    driftVar = ... % 1x1 matrix
+    posVar = [0.25*R0^2  0.25*R0^2]; % 1x2 matrix
+    linVelVar = [0 0]; % 1x2 matrix
+    
+    phi_bar = estConst.RotationStartBound;
+    rho_bar = estConst.WindAngleStartBound;
+
+    oriVar = (1/3)*phi_bar^2; % 1x1 matrix
+    windVar = (1/3)*rho_bar^2; % 1x1 matrix
+    
+    % There is no drift for initial measurement so we know drift est=0
+    % without uncertainty. 
+    driftVar = 0; % 1x1 matrix
     
     % estimator variance init (initial posterior variance)
-    estState.Pm = ...
+    estState.Pm = diag([posVar linVelVar oriVar windVar driftVar]); % diagonal matrix 7x7
     % estimator state
-    estState.xm = ...
+    estState.xm = [posEst'; linVelEst'; oriEst; windEst; driftEst]; % 7x1 matrix
     % time of last update
     estState.tm = tm;
+    return;
 end
 
 %% Estimator iteration.
 % get time since last estimator update
-dt = ...
+dt = tm - estState.tm;
 estState.tm = tm; % update measurement update time
 
-% prior update
+%% prior update
 
-% measurement update
+% Initial state
+xP_0 =[estState.xm;reshape(estState.Pm,[49,1])];
 
-% Get resulting estimates and variances
+% Solve ODE
+[~ , sol ] = ode45( @(t,estState_simple) prior_update_ODE(t, estState_simple,estConst, actuate),[tm-dt tm], xP_0);
+
+% Predicted intermediary values
+xp = sol(end, 1:7)';
+Pp = reshape(sol(end,8:56), [7,7]);
+
+%% measurement update
+
+
+px =estState.xm(1);
+py = estState.xm(2);
+phi = estState.xm(5);
+b = estState.xm(7);
+
+%get R matrix
+R  = diag([estConst.DistNoiseA estConst.DistNoiseB estConst.DistNoiseC estConst.GyroNoise estConst.CompassNoise]);
+
+% get M matrix
+M = eye(5); %5x5 matrix
+
+% get h matrix ( measurement model)
+h = [sqrt((px- estConst.pos_radioA(1))^2+(py-estConst.pos_radioA(2))^2);
+    sqrt((px- estConst.pos_radioB(1))^2+(py-estConst.pos_radioB(2))^2);
+    sqrt((px- estConst.pos_radioC(1))^2+(py-estConst.pos_radioC(2))^2);
+    phi+b;
+    phi]; %5x1 matrix
+
+% get H matrix
+H = zeros(5,7); %5x7 matrix
+H(1,1) = (px - estConst.pos_radioA(1))/h(1);
+H(1,2) = (py - estConst.pos_radioA(2))/h(1);
+H(2,1) = (px - estConst.pos_radioB(1))/h(2);
+H(2,2) = (py - estConst.pos_radioB(2))/h(2);
+H(3,1) = (px - estConst.pos_radioC(1))/h(3);
+H(3,2) = (py - estConst.pos_radioC(2))/h(3);
+H(4,5) = 1; 
+H(4,7)= 1;
+H(5,5)= 1;
+
+% Measurement at station C is not always available
+% measurement = inf when not available
+if isinf(sense(3))
+    % replace affected values in matrices by a blank
+    R(3,:) = [];
+    R(:,3) = [];
+    
+    M(3,:) = [];
+    M(:,3) = [];
+    
+    H(3,:) = [];
+    
+    sense(3) = [];
+    h(3) = [];
+    
+end
+
+% get Kalman gain matrix
+K= Pp*H'/(H*Pp*H'+M*R*M'); %7x5 matrix
+
+% Update estimate with measurement
+xm = xp + K*(sense'-h); %7x1 matrix
+Pm = (eye(7)-K*H)*Pp ;%7x7 matrix
+
+% Get resulting estimates and variancese
+estState.xm = xm;
+estState.Pm = Pm;
+
 % Output quantities
 posEst = estState.xm(1:2);
-linVelEst = ...
-oriEst = ...
-windEst = ...
-driftEst = ...
+linVelEst = estState.xm(3:4);
+oriEst = estState.xm(5);
+windEst = estState.xm(6);
+driftEst = estState.xm(7);
 
-posVar = ...
-linVelVar = ...
-oriVar = ...
-windVar = ...
-driftVar = ...
+posVar = [estState.Pm(1,1) estState.Pm(2,2)];
+linVelVar = [estState.Pm(3,3) estState.Pm(4,4)];
+oriVar = estState.Pm(5,5);
+windVar = estState.Pm(6,6);
+driftVar = estState.Pm(7,7);
 
 end
+
+
+%% Functions used in the prior update step 
+function [q]= get_q(x_hat,estConst,u)
+    % input: xhat vector: px, py, sx, sx, phi, rho, b
+    
+    C_dh = estConst.dragCoefficientHydr;
+    C_da = estConst.dragCoefficientAir;
+    C_w = estConst.windVel;
+    C_r = estConst.rudderCoefficient; 
+    
+    % make it easier to read
+    sx = x_hat(3);
+    sy = x_hat(4);
+    phi = x_hat(5);
+    rho = x_hat(6);
+    
+    % returns a 7x1 vector
+    % x_dot = q(x_hat, 0, t)
+    % all noises = 0 beacuse they are zero mean 
+    q = zeros(7,1);
+    q(1)= sx; %sx
+    q(2)= sy; %sy
+    q(3)= cos(phi)*(tanh(u(1))- C_dh*(sx^2+sy^2)) - C_da*(sx-C_w*cos(rho))*sqrt((sx-C_w*cos(rho))^2+(sy-C_w*sin(rho))^2);
+    q(4)= sin(phi)*(tanh(u(1))- C_dh*(sx^2+sy^2))- C_da*(sy-C_w*sin(rho))*sqrt((sx-C_w*cos(rho))^2+(sy-C_w*sin(rho))^2);
+    q(5)= C_r*u(2);
+    %q(6)= 0  and q(7) =0
+    
+end 
+
+function [A] = get_A(x_hat, estConst, u)
+    % A is 7x7 matrix: A = dq/dx
+    C_dh = estConst.dragCoefficientHydr;
+    C_da = estConst.dragCoefficientAir;
+    C_w = estConst.windVel;
+
+    % make it easier to read
+    sx = x_hat(3);
+    sy = x_hat(4);
+    phi = x_hat(5);
+    rho = x_hat(6);
+    
+    A = zeros(7); %7x7 zeros matrix
+    A(1,3)= 1; % dq(1)/d(sx)
+    A(2,4) = 1; % dq(2)/d(sx)
+    
+    % 13 = c_da; 7 = C_dh; A = tanh(ut)
+    A(3,3)= - C_da*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2) - 2*C_dh*sx*cos(phi) - (C_da*(sx - C_w*cos(rho))*(2*sx - 2*C_w*cos(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2)); %dq(3)/d(sx)
+    A(3,4) = - 2*C_dh*sy*cos(phi) - (C_da*(sx - C_w*cos(rho))*(2*sy - 2*C_w*sin(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2)); %dq(3)/d(sy)
+    A(3,5) = -sin(phi)*(tanh(u(1)) - C_dh*(sx^2 + sy^2)); %dq(3)/d(phi)
+    A(3,6) = - (C_da*(2*C_w*sin(rho)*(sx - C_w*cos(rho)) - 2*C_w*cos(rho)*(sy - C_w*sin(rho)))*(sx - C_w*cos(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2)) - C_da*C_w*sin(rho)*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2);
+    A(4,3) = - 2*C_dh*sx*sin(phi) - (C_da*(sy - C_w*sin(rho))*(2*sx - 2*C_w*cos(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2)); %dq4/d(sx)
+    A(4,4)=- C_da*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2) - 2*C_dh*sy*sin(phi) - (C_da*(sy - C_w*sin(rho))*(2*sy - 2*C_w*sin(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2)); %dq4/d(sy)
+    A(4,5) = cos(phi)*(tanh(u(1)) - C_dh*(sx^2 + sy^2)); %dq4/d(phi)
+    A(4,6) = C_da*C_w*cos(rho)*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2) - (C_da*(2*C_w*sin(rho)*(sx - C_w*cos(rho)) - 2*C_w*cos(rho)*(sy - C_w*sin(rho)))*(sy - C_w*sin(rho)))/(2*((sx - C_w*cos(rho))^2 + (sy - C_w*sin(rho))^2)^(1/2));
+
+end 
+
+function [L]= get_L(x_hat, estConst, u)
+    % process noise vector v= [vd; vr; vrho; vb]
+    
+    C_dh = estConst.dragCoefficientHydr;
+    C_r = estConst.rudderCoefficient; 
+    
+    % make it easier to read
+    sx = x_hat(3);
+    sy = x_hat(4);
+    phi = x_hat(5);
+    
+    % So L = dq/dv is 7x4 matrix
+    L = zeros(7,4);
+    %L(1,:), L(2,:) = 0 position not related to noise
+    L(3,1) = -cos(phi)*C_dh*(sx^2+sy^2);
+    L(4,1) = -sin(phi)*C_dh*(sx^2+sy^2);
+    L(5,2)= C_r*u(2);
+    L(6,3)= 1;
+    L(7,4)= 1;
+end
+
+function [xP_dot]= prior_update_ODE(t,estState_simple,estConst, actuate)
+    
+    xm = estState_simple(1:7);
+    x_dot = get_q(xm, estConst,actuate); %7x1 matrix
+    
+    % find A and L matrices
+    A = get_A(xm, estConst, actuate); %7x7 matrix
+    L = get_L(xm, estConst, actuate); %7x4 matrix 
+    Qc = diag([estConst.DragNoise estConst.RudderNoise estConst.WindAngleNoise estConst.GyroDriftNoise]); % 4x4 diagonal matrix
+    
+    P = reshape(estState_simple(8:56), [7,7]);
+    P_dot = reshape(A*P + P*A'+L*Qc*L', [49, 1]); % flatten 7x7 matrix in to 49x1
+    
+    % Combine and reshape matrices for solving ODE
+    
+    xP_dot = [x_dot; P_dot]; %(7+49)x1 matrix
+end 
+
