@@ -80,6 +80,7 @@ points = zeros(size(estConst.contour, 1), size(estConst.contour, 2), N_particles
 p_z = zeros(1, N_particles); %Probability distribution of the observations based on the prior
 w_k = zeros(1, N_particles);
 reSampSize = 10*N_particles;
+debug = false;
 %Propagate particles through dynamics
 
 for i = 1:N_particles
@@ -98,21 +99,22 @@ for i = 1:N_particles
     points(9, 1, i)  = priors(4, i); 
     
     %Find intersection 
-    interPoint = findIntersectionPoints(priors(3, i), points(:, :, i), priors(1:2, i)); %[x_c; y_c] - coordinates of the laser intersection of the contour
+    interPoint = findIntersectionPoints(priors(3, i), points(:, :, i), priors(1:2, i), false); %[x_c; y_c] - coordinates of the laser intersection of the contour
+%     plotDebug(interPoint, priors(1:2, i), priors(3, i), points(:, :, i));
     df = priors(1:2, i) - interPoint; 
     w_k(i) = sens - sqrt(sum(df .* df));
     p_z(i) = pdf_wk(w_k(i), estConst.epsilon);
 end
-disp
+
 if sum(p_z) == 0
     p_z_rr = zeros(1, reSampSize);
     while (sum(p_z_rr) == 0) 
         b_x = [-estConst.l, max(estConst.contour(:, 1))];
         b_y = [min(estConst.contour(:, 2)), max(estConst.contour(:, 2))];
-        b_phi = [-estConst.phi_0, estConst.phi_0];
+        b_phi = [-pi, pi];
         b_k = [-estConst.l, estConst.l];
-        mu = [mean(b_x); mean(b_y); mean(b_phi); mean(b_k)];
-        bound = [0.5*(b_x(2) - b_x(1)); 0.5*(b_y(2) - b_y(1)); 0.5*(b_phi(2) - b_phi(1)); 0.5*(b_k(2) - b_k(1))];
+        mu = [mean(prevPostParticles.x_r); mean(prevPostParticles.y_r); mean(prevPostParticles.phi); mean(prevPostParticles.kappa)];
+        bound = [0.2; 0.2; 2*pi; 0.2];
         priors_rr = uniformResample(mu, bound, reSampSize, estConst.contour);
         w_rr = zeros(1, reSampSize);
         points_rr = zeros(size(estConst.contour, 1), size(estConst.contour, 2), reSampSize);
@@ -120,15 +122,17 @@ if sum(p_z) == 0
             points_rr(:, :, i) = estConst.contour;
             points_rr(8, 1, i) =  priors_rr(4, i);
             points_rr(9, 1, i)  = priors_rr(4, i); 
-            interPoint = findIntersectionPoints(priors_rr(3, i), points_rr(:, :, i), priors_rr(1:2, i)); 
+            interPoint = findIntersectionPoints(priors_rr(3, i), points_rr(:, :, i), priors_rr(1:2, i), false); 
+%             plotDebug(interPoint, priors_rr(1:2, i), priors_rr(3, i), points_rr(:, :, i));
             df = priors_rr(1:2, i) - interPoint; 
             w_rr(i) = sens - sqrt(sum(df .* df));
             p_z_rr(i) = pdf_wk(w_rr(i), estConst.epsilon);
         end
         [~, idx_rr] = maxk(p_z_rr, N_particles);
-        p_z = p_z_rr(idx_rr);
     end
     priors = priors_rr(:, idx_rr);
+    p_z = p_z_rr(idx_rr);
+    debug = false;
 end
 alpha = 1/sum(p_z);
 beta = alpha * p_z;
@@ -146,6 +150,15 @@ postParticles.x_r = priors(1, idx) + getNormalSample(0, rough_sigmas(1), [1, N_p
 postParticles.y_r = priors(2, idx) + getNormalSample(0, rough_sigmas(2), [1, N_particles]);
 postParticles.phi = priors(3, idx) + getNormalSample(0, rough_sigmas(3), [1, N_particles]);
 postParticles.kappa = priors(4, idx) + getNormalSample(0, rough_sigmas(4), [1, N_particles]);
+
+if debug
+    drawMap(estConst.contour);
+    drawPosition([prevPostParticles.x_r; prevPostParticles.y_r], 'r');
+    drawPosition(priors(1:2, idx), 'g');
+    drawPosition([postParticles.x_r; postParticles.y_r], 'b');
+    debug = false;
+end
+
 end % end estimator
 
 %Disclaimer - probably can be cleaned up quite a bit, e.g. using 
@@ -200,11 +213,13 @@ function plotDebug(inter, pos, phi, points)
     plot([pos(1), inter(1)], [pos(2), inter(2)]);
     scatter(pos(1), pos(2), 'g')
     scatter(inter(1), inter(2), 'r')
-    plot([pos(1), pos(1) + 3], [[pos(2), pos(2) + 3*tan(phi)]]);
+    plot([pos(1), pos(1) + 2*cos(phi)], [pos(2), pos(2) + 2*sin(phi)]);
 end
 
-function interPoint = findIntersectionPoints(phi, points, position)
+function minPoint = findIntersectionPoints(phi, points, position, debug)
     interPoint = zeros(2, numel(phi));
+    mindist = 10e6;
+    minPoint = [0; 0];
     for j = 1:size(points, 1)
         if j == size(points, 1)
             p2 = 1;
@@ -214,7 +229,27 @@ function interPoint = findIntersectionPoints(phi, points, position)
         p1 = j;
         phi1 = findAngle(position, points(p1, :));
         phi2 = findAngle(position, points(p2, :));
-        if ((phi1 <= phi) && (phi < phi2)) || ((phi1 < phi) && (phi <= phi2))
+        if debug
+         drawPosition(points, position);
+         drawAngles(phi, phi1, phi2, position);
+        end
+        if (phi1 > 0) && (phi2 < 0)
+            phi1_c = phi1;
+            phi2_c = 360+phi2;
+            if phi < 0 
+                phi_c = 360 + phi;
+            else
+                phi_c = phi;
+            end
+        else
+            phi1_c = phi1;
+            phi2_c = phi2; 
+            phi_c = phi;
+        end
+        if ((phi1_c <= phi_c) && (phi_c < phi2_c)) || ((phi1_c < phi_c) && (phi_c <= phi2_c))
+            if debug
+                drawAngles(phi, phi1, phi2, position);
+            end
             line = getLine(points(p1, :), points(p2, :));
             line_c = [tan(phi), position(2) - tan(phi)*position(1)];
             if ((line(1) == 0) && (line(2) == 0) && (points(p1, 2) ~= points(p2, 2))) % --> vertical contour
@@ -224,9 +259,38 @@ function interPoint = findIntersectionPoints(phi, points, position)
                 out = findIntersection(line, line_c);
             end
             interPoint = [out(1); out(2)];
-            break;
+            if norm(position - interPoint) < mindist
+                mindist = norm(position - interPoint);
+                minPoint = interPoint;
+            end
         end
     end
+    
+end
+
+function drawPosition(pos, col)
+    hold on;
+    scatter(pos(1, :), pos(2, :), col);
+end
+
+function drawMap(points)
+    clf;
+    hold on;
+    for j = 1:size(points, 1)
+        if j == size(points, 1)
+            p2 = 1;
+        else
+            p2 = j+1;
+        end
+        p1 = j;
+        plot(points([p1, p2], 1), points([p1, p2], 2), 'k'); 
+    end
+end
+
+function drawAngles(phi, phi1, phi2, pos)
+plot([pos(1), pos(1) + 2*cos(phi1)], [pos(2), pos(2) + 2*sin(phi1)] ,'r');
+plot([pos(1), pos(1) + 2*cos(phi2)], [pos(2), pos(2) + 2*sin(phi2)] ,'y');
+plot([pos(1), pos(1) + 2*cos(phi)], [pos(2), pos(2) + 2*sin(phi)] ,'b');
 end
 
 function phi = findAngle(p1, p2)
