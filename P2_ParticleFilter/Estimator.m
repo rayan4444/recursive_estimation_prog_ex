@@ -85,7 +85,6 @@ points = zeros(size(estConst.contour, 1), size(estConst.contour, 2), N_particles
 p_z = zeros(1, N_particles); %Probability distribution of the observations based on the prior
 w_k = zeros(1, N_particles);
 
-
 %Propagate particles through dynamics
 
 for i = 1:N_particles
@@ -137,6 +136,7 @@ postParticles.x_r = zeros(1, N_particles);
 postParticles.y_r = zeros(1, N_particles);
 postParticles.phi = zeros(1, N_particles);
 postParticles.kappa = zeros(1, N_particles);
+
 rough_sigmas = getRougheningSigma(K, priors, N_particles);
 
 %Measurement update + resample
@@ -146,8 +146,6 @@ postParticles.x_r = priors(1, idx) + getNormalSample(0, rough_sigmas(1), [1, N_p
 postParticles.y_r = priors(2, idx) + getNormalSample(0, rough_sigmas(2), [1, N_particles]);
 postParticles.phi = priors(3, idx) + getNormalSample(0, rough_sigmas(3), [1, N_particles]);
 postParticles.kappa = priors(4, idx) + getNormalSample(0, rough_sigmas(4), [1, N_particles]);
-
-
 end % end estimator
 
 %Disclaimer - probably can be cleaned up quite a bit, e.g. using 
@@ -165,6 +163,7 @@ function samps = uniformResample(mu, bounds, N_particles, contour)
         end
     end
 end
+
 
 function xkp1 = q(xp, u, v)
     xkp1 = [xp(1) + (u(1) + v(1)) .* cos(xp(3));
