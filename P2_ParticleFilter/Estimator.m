@@ -1,4 +1,4 @@
-function [postParticles] = Estimator(prevPostParticles, sens, act, estConst, km)
+  function [postParticles] = Estimator(prevPostParticles, sens, act, estConst, km)
 % The estimator function. The function will be called in two different
 % modes: If km==0, the estimator is initialized. If km > 0, the
 % estimator does an iteration for a single sample time interval using the 
@@ -52,7 +52,12 @@ function [postParticles] = Estimator(prevPostParticles, sens, act, estConst, km)
 % csferrazza@ethz.ch
 
 % Set number of particles:
-N_particles = estConst.N_particles; % obviously, you will need more particles than 10.
+N_particles = 3000; 
+% Roughening constant
+K = 0.001;
+% Resampling when probabilities collapse
+reSampSize = 10*N_particles;
+
 %% Mode 1: Initialization
 if (km == 0)
     % Do the initialization of your estimator here!
@@ -62,7 +67,9 @@ if (km == 0)
     postParticles.x_r =  x_0(:, 1)';% 1xN_particles matrix
     postParticles.y_r = x_0(:, 2)';% 1xN_particlses matrix
     postParticles.phi = x_0(:, 3)';% 1xN_particles matrix
-    postParticles.kappa = x_0(:, 4)';% 1xN_parunrticles matrix    
+    postParticles.kappa = x_0(:, 4)';% 1xN_parunrticles matrix
+    postParticles.beta = 0;
+    postParticles.prevPriors = zeros(4, N_particles);
     
     % and leave the function
     return;
@@ -77,7 +84,9 @@ priors = zeros(4, N_particles);
 points = zeros(size(estConst.contour, 1), size(estConst.contour, 2), N_particles); % contour map for each kappa, [10x2xN_particles]
 p_z = zeros(1, N_particles); %Probability distribution of the observations based on the prior
 w_k = zeros(1, N_particles);
+
 %Propagate particles through dynamics
+
 for i = 1:N_particles
     procNoise(:, i) = getProcessNoise([estConst.sigma_f;
                          estConst.sigma_phi]); 
@@ -94,46 +103,66 @@ for i = 1:N_particles
     points(9, 1, i)  = priors(4, i); 
     
     %Find intersection 
-    interPoint = findIntersectionPoints(priors(3, i), points(:, :, i), priors(1:2, i)); %[x_c; y_c] - coordinates of the laser intersection of the contour
-    df = priors(1:2, i) - interPoint; 
-    w_k(i) = sens - sqrt(sum(df .* df));
-    p_z(i) = pdf_wk(w_k(i), estConst.epsilon, estConst.epsilon/10000);
+    d = get_distance(priors(:,i), points(:,:,i)) ;
+    w_k(i)=sens - d; 
+    p_z(i) = pdf_wk(w_k(i), estConst.epsilon);
 end
+
+if sum(p_z) == 0
+    p_z_rr = zeros(1, reSampSize);
+    while (sum(p_z_rr) == 0) 
+        mu = [mean(prevPostParticles.x_r); mean(prevPostParticles.y_r); mean(prevPostParticles.phi); mean(prevPostParticles.kappa)];
+        bound = [0.2; 0.2; 2*pi; 0.2];
+        priors_rr = uniformResample(mu, bound, reSampSize, estConst.contour);
+        w_rr = zeros(1, reSampSize);
+        points_rr = zeros(size(estConst.contour, 1), size(estConst.contour, 2), reSampSize);
+        for i = 1:reSampSize
+            points_rr(:, :, i) = estConst.contour;
+            points_rr(8, 1, i) =  priors_rr(4, i);
+            points_rr(9, 1, i)  = priors_rr(4, i); 
+            d_rr = get_distance(priors_rr(:,i), points_rr(:,:,i)) ;
+            w_rr(i)=sens - d_rr; 
+            p_z_rr(i) = pdf_wk(w_rr(i), estConst.epsilon);
+        end
+        [~, idx_rr] = maxk(p_z_rr, N_particles);
+    end
+    priors = priors_rr(:, idx_rr);
+    p_z = p_z_rr(idx_rr);
+end
+alpha = 1/sum(p_z);
+beta = alpha * p_z;
 
 postParticles.x_r = zeros(1, N_particles);
 postParticles.y_r = zeros(1, N_particles);
 postParticles.phi = zeros(1, N_particles);
 postParticles.kappa = zeros(1, N_particles);
-rough_sigmas = getRougheningSigma(estConst.K, priors, N_particles);
 
-if sum(p_z) == 0 %Have to deal with situations when the measurement cannot be explained by our model
-    ihavenocluewhattodo = 69420;
-    %What is below is wrong (it's the same as in the else statement)
-    alpha = 1/sum(p_z);
-    beta = alpha * p_z;
+rough_sigmas = getRougheningSigma(K, priors, N_particles);
 
-    %Measurement update + resample
-    idx = getResample(beta);
-    postParticles.x_r = priors(1, idx) + getNormalSample(0, rough_sigmas(1));
-    postParticles.y_r = priors(2, idx) + getNormalSample(0, rough_sigmas(2));
-    postParticles.phi = priors(3, idx) + getNormalSample(0, rough_sigmas(3));
-    postParticles.kappa = priors(4, idx) + getNormalSample(0, rough_sigmas(4));
-else
-    alpha = 1/sum(p_z);
-    beta = alpha * p_z;
+%Measurement update + resample
+idx = getResample(beta);
 
-    %Measurement update + resample
-    idx = getResample(beta);
-    postParticles.x_r = priors(1, idx) + getNormalSample(0, rough_sigmas(1));
-    postParticles.y_r = priors(2, idx) + getNormalSample(0, rough_sigmas(2));
-    postParticles.phi = priors(3, idx) + getNormalSample(0, rough_sigmas(3));
-    postParticles.kappa = priors(4, idx) + getNormalSample(0, rough_sigmas(4));
-    end
+postParticles.x_r = priors(1, idx) + getNormalSample(0, rough_sigmas(1), [1, N_particles]);
+postParticles.y_r = priors(2, idx) + getNormalSample(0, rough_sigmas(2), [1, N_particles]);
+postParticles.phi = priors(3, idx) + getNormalSample(0, rough_sigmas(3), [1, N_particles]);
+postParticles.kappa = priors(4, idx) + getNormalSample(0, rough_sigmas(4), [1, N_particles]);
 end % end estimator
 
 %Disclaimer - probably can be cleaned up quite a bit, e.g. using 
 % getSample more generally to sample a pdf f with a cdf F
 
+function samps = uniformResample(mu, bounds, N_particles, contour)
+    samps = zeros(4, N_particles);
+    for i = 1:N_particles
+        if i == 1
+            samps(:, i) = mu + (rand(4, 1)*2 - 1) .* bounds;
+        else
+            while ~inpolygon(samps(1, i), samps(2, i), contour(:, 1), contour(:, 2))
+                samps(:, i) = mu + (rand(4, 1)*2 - 1) .* bounds;
+            end
+        end
+    end
+end
 
 
 function xkp1 = q(xp, u, v)
@@ -143,84 +172,12 @@ function xkp1 = q(xp, u, v)
             xp(4)];
 end
 
-function zk = w(position, interPoint, wk)
-    diff = (position-interPoint);
-    tmp = diff .* diff;
-    zk = sqrt(tmp(1) + tmp(2)) + wk;
-end
-
 function sigmas = getRougheningSigma(K, priors, N)
     sigmas = K * (N^(-1/4)) * (max(priors, [], 2) - min(priors, [], 2));
 end
 
-function samp = getNormalSample(mu, sigma)
-    samp = mu + sqrt(2)*sigma*erfinv(2*rand-1);
-end
-
-function plotDebug(inter, pos, phi, points)
-    clf;
-    hold on;
-    for j = 1:size(points, 1)
-        if j == size(points, 1)
-            p2 = 1;
-        else
-            p2 = j+1;
-        end
-        p1 = j;
-        plot(points([p1, p2], 1), points([p1, p2], 2), 'k'); 
-    end
-    plot([pos(1), inter(1)], [pos(2), inter(2)]);
-    scatter(pos(1), pos(2), 'g')
-    scatter(inter(1), inter(2), 'r')
-    plot([pos(1), pos(1) + 3], [[pos(2), pos(2) + 3*tan(phi)]]);
-end
-
-function interPoint = findIntersectionPoints(phi, points, position)
-    interPoint = zeros(2, numel(phi));
-    for j = 1:size(points, 1)
-        if j == size(points, 1)
-            p2 = 1;
-        else
-            p2 = j+1;
-        end
-        p1 = j;
-        phi1 = findAngle(position, points(p1, :));
-        phi2 = findAngle(position, points(p2, :));
-        if ((phi1 <= phi) && (phi < phi2)) || ((phi1 < phi) && (phi <= phi2))
-            line = getLine(points(p1, :), points(p2, :));
-            line_c = [tan(phi), position(2) - tan(phi)*position(1)];
-            if ((line(1) == 0) && (line(2) == 0) && (points(p1, 2) ~= points(p2, 2))) % --> vertical contour
-                y = line_c(1)*points(p1, 1) + line_c(2);
-                out = [points(p1, 1); y];
-            else
-                out = findIntersection(line, line_c);
-            end
-            interPoint = [out(1); out(2)];
-            break;
-        end
-    end
-end
-
-function phi = findAngle(p1, p2)
-    phi = atan2(p2(2) - p1(2), p2(1) - p1(1));
-end
-
-function res = getLine(p1, p2)
-    if det([p1(1) 1; p2(1) 1]) ~= 0
-        if (p1(2) == 0) && (p2(2) == 0)
-            res = [0; p1(2)];
-        else
-            res = [p1(1) 1; p2(1) 1] \ ([p1(2); p2(2)]); 
-        end
-    else
-        res = [0; 0];
-    end
-end
-
-function res = findIntersection(line1, line2)
-    x = (line2(2) - line1(2))/(line1(1) - line2(1));
-    y = line1(1) * x + line1(2);
-    res = [x; y];
+function samp = getNormalSample(mu, sigma, size)
+    samp = mu + sqrt(2)*sigma*erfinv(2*rand(size(1), size(2))-1);
 end
 
 function procNoise = getProcessNoise(sigma)
@@ -243,7 +200,7 @@ function idx = getResample(beta)
     end
 end
 
-function pwk = pdf_wk(x_in, epsilon, delta)
+function pwk = pdf_wk(x_in, epsilon)
     if x_in<0
         x_in = -x_in;
     end
@@ -257,8 +214,8 @@ function pwk = pdf_wk(x_in, epsilon, delta)
         pwk = 0;
         return;
     end
-    delta = epsilon/10000; %Completely random 
-    pwk = pdf(x_in) * delta; % Rectangular integration lol long time no see
+    delta = epsilon/1000; %Completely random 
+    pwk = 0.5*delta*(pdf(x_in+0.5*delta) + pdf(x_in-0.5*delta)); % Trapezoid integration lol long time no see
 end
 
 function x_bar = sampleInitial(mu, var, N) %Sample uniform around (p0-x_bar) <= d 
@@ -286,5 +243,47 @@ function x_bar = sampleInitial(mu, var, N) %Sample uniform around (p0-x_bar) <= 
                 x_bar(k, j) = var(j)*(2*u_bar(k, j) - 1) + mu(j+2);
             end
         end
+    end
+end
+
+function [d]= get_distance(priors,contour) % NOTE: to vectorize!
+  % solve system of equations with two unknows: fraction of length (point 1
+  % to intersection point) and distance from robot to intersection point. 
+  % A[ fraction;distance] = b with A and b known 
+  
+    fraction = zeros(1,10);
+    distance  = zeros(1,10);
+    % read corner coordinate
+    for i = 1:10
+        x1 = contour( i ,1);
+        y1 = contour( i ,2);
+        
+        if i==10
+            x2 = contour(1 ,1);
+            y2 = contour(1,2);
+        else
+            x2 = contour( i+1 ,1);
+            y2 = contour( i+1,2);
+        end
+        A = [ x1-x2, -cos(priors(3));
+              y1-y2 -sin(priors(3))];
+        b = [priors(1)-x2; priors(2)-y2];
+        
+%         solution = inv(A)\b;
+%         fraction(i) = solution(1);
+%         distance(i) = solution (2);
+        % >> Too slow, try to make it faster by expanding manually
+%         
+        determinant = sin(priors(3) )*(x2-x1)+cos(priors(3) )*(y1-y2);
+        fraction(i) = (sin(priors(3) )*(x2-priors(1) )+cos(priors(3) )*(priors(2) -y2))/determinant;
+        distance(i)  = ( (y2-y1)*(priors(1) -x2)+(x1-x2)*(priors(2) -y2) )/determinant;
+    end
+    % determine the wall intersected
+    % fraction of the segment
+    mask = fraction >= 0 & fraction <= 1 & distance >= 0;
+    B = distance.*mask;
+    d = min(B(B~=0));
+    if isempty(d)
+        d = inf;
     end
 end
